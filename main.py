@@ -13,7 +13,7 @@ import asyncio
 # 👇 ВСТАВТЕ СЮДИ ВАШ НОВИЙ ТОКЕН!
 TOKEN = "8516307940:AAHecLuAJqpmlv0Oz-morWAR7z_1Nr8nmcE"
 
-# ВАШ ID ГРУПИ
+# ВАШ ID ГРУПИ (Вже вписаний)
 ADMIN_GROUP_ID = -1003308912052
 
 logging.basicConfig(level=logging.INFO)
@@ -52,15 +52,27 @@ async def start(message: types.Message, state: FSMContext):
 async def get_id(message: types.Message):
     await message.reply(f"ID: `{message.chat.id}`", parse_mode="Markdown")
 
-# --- КНОПКИ ---
+# --- КНОПКИ (ОНОВЛЕНІ ТЕКСТИ) ---
 @dp.message_handler(lambda m: m.text == "📄 Прайс-лист")
 async def price(m: types.Message):
-    await m.answer("🔬 Лабораторна — <b>50 грн</b>\n📝 Практична — <b>50 грн</b>\n⏳ Термінове виконання оплачується додатково.", parse_mode="HTML")
+    text = (
+        "🔬 Лабораторна робота — <b>50 грн / шт.</b>\n"
+        "📝 Практична робота — <b>50 грн / шт.</b>\n\n"
+        "⏳ <i>Термінове виконання оплачується додатково.</i>"
+    )
+    await m.answer(text, parse_mode="HTML")
 
 @dp.message_handler(lambda m: m.text == "⚠️ Попередження")
 async def warn(m: types.Message):
-    await m.answer("<b>⚠️ ВІДМОВА ВІД ВІДПОВІДАЛЬНОСТІ</b>\nАдміністрація бота не несе відповідальності за можливі академічні наслідки, включно з ситуаціями, коли викладач або навчальний заклад виявляє підозру щодо повної правильності поданих матеріалів.
-Усі ризики, пов’язані з використанням отриманих матеріалів, повністю покладаються на користувача.", parse_mode="HTML")
+    text = (
+        "<b>⚠️ ВІДМОВА ВІД ВІДПОВІДАЛЬНОСТІ</b>\n\n"
+        "Адміністрація бота не несе відповідальності за можливі академічні наслідки, "
+        "включно з ситуаціями, коли викладач або навчальний заклад виявляє підозру "
+        "щодо походження поданих матеріалів.\n\n"
+        "Усі ризики, пов’язані з використанням отриманих матеріалів, "
+        "повністю покладаються на користувача."
+    )
+    await m.answer(text, parse_mode="HTML")
 
 # --- ЗАМОВЛЕННЯ ---
 @dp.message_handler(lambda m: m.text == "📚 Замовити роботу", state="*")
@@ -75,7 +87,7 @@ async def order_urgent(m: types.Message, state: FSMContext):
     async with state.proxy() as data: data['is_urgent'] = True
     await m.answer("🚀 <b>ТЕРМІНОВО!</b>\n1️⃣ Введіть ПІБ:", parse_mode="HTML", reply_markup=types.ReplyKeyboardRemove())
 
-# --- ЕТАПИ ---
+# --- ЕТАПИ АНКЕТИ ---
 @dp.message_handler(state=OrderState.waiting_for_name)
 async def s1(m: types.Message, state: FSMContext):
     async with state.proxy() as d: d['name'] = m.text
@@ -149,23 +161,24 @@ async def supp_msg(m: types.Message, state: FSMContext):
     await state.finish()
     await m.answer("✅ Надіслано!", reply_markup=get_main_keyboard())
 
-# --- АДМІН ---
+# --- АДМІН ВІДПОВІДАЄ ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def reply(m: types.Message):
     try:
         rep = m.reply_to_message
         txt = rep.text or rep.caption or ""
         uid = None
+        # Шукаємо ID через Regex (🆔 12345) або Forward
         if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
         elif rep.forward_from: uid = rep.forward_from.id
         
         if uid:
             await m.copy_to(uid)
-            await m.reply("✅")
+            await m.reply("✅ Відповідь надіслано!")
         else:
-            await m.reply("❌ Не бачу ID (🆔)")
+            await m.reply("❌ Не бачу ID. Переконайтеся, що відповідаєте на повідомлення з 🆔")
     except Exception as e:
-        await m.reply(f"❌ {e}")
+        await m.reply(f"❌ Помилка: {e}")
 
 # --- СЕРВЕР (ЩОБ НЕ ВИМИКАВСЯ) ---
 async def keep_alive(request):
@@ -181,4 +194,3 @@ async def on_startup(dp):
 
 if __name__ == '__main__':
     executor.start_polling(dp, on_startup=on_startup)
-

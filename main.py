@@ -116,15 +116,24 @@ async def s4(m: types.Message, state: FSMContext):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Відправити замовлення")
     await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=kb)
 
-# --- ЗБІР І ВІДПРАВКА ---
+# --- ЗБІР І ВІДПРАВКА (ТУТ ВИПРАВЛЕНО ОФОРМЛЕННЯ) ---
 @dp.message_handler(state=OrderState.waiting_for_details, content_types=types.ContentTypes.ANY)
 async def s5(m: types.Message, state: FSMContext):
     if m.text == "✅ Відправити замовлення":
         async with state.proxy() as d:
             desc = "\n".join(d['desc']) or "[Без опису]"
             title = "🔥🔥🔥 ТЕРМІНОВО!" if d['is_urgent'] else "⚡️ НОВЕ ЗАМОВЛЕННЯ!"
-            report = (f"<b>{title}</b>\n👤 {d['name']}\n🎓 {d['group']}\n📚 {d['subject']}\n"
-                      f"👨‍🏫 {d['teacher']}\n📝 {desc}\n🆔 <code>{m.from_user.id}</code>")
+            
+            # ФОРМУВАННЯ ЗВІТУ ЯК НА ФОТО
+            report = (
+                f"<b>{title}</b>\n\n"
+                f"👤 <b>ПІБ:</b> {d['name']} (@{m.from_user.username})\n"
+                f"🎓 <b>Група:</b> {d['group']}\n"
+                f"📚 <b>Предмет:</b> {d['subject']}\n"
+                f"👨‍🏫 <b>Викладач:</b> {d['teacher']}\n"
+                f"📝 <b>Деталі:</b> {desc}\n\n"
+                f"🆔 <code>{m.from_user.id}</code>"
+            )
             
             if ADMIN_GROUP_ID != 0:
                 await bot.send_message(ADMIN_GROUP_ID, report, parse_mode="HTML")
@@ -168,7 +177,6 @@ async def reply(m: types.Message):
         rep = m.reply_to_message
         txt = rep.text or rep.caption or ""
         uid = None
-        # Шукаємо ID через Regex (🆔 12345) або Forward
         if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
         elif rep.forward_from: uid = rep.forward_from.id
         

@@ -12,7 +12,7 @@ TOKEN = "8516307940:AAGBqIn662FbQXFBhwLesgtczeGtfcju4PA"
 
 # ID ВАШОЇ ГРУПИ
 # 1. Спочатку залиште 0.
-# 2. Залийте код, запустіть бота.
+# 2. Залийте код, зачекайте запуску ("Live").
 # 3. Напишіть у групу /getid, отримайте цифри.
 # 4. Замініть 0 на ці цифри (з мінусом).
 ADMIN_GROUP_ID = 0
@@ -51,10 +51,10 @@ async def start_cmd(message: types.Message, state: FSMContext):
         reply_markup=get_main_keyboard()
     )
 
-# --- ОТРИМАТИ ID ГРУПИ (Щоб ви дізналися куди писати боту) ---
+# --- ОТРИМАТИ ID ГРУПИ ---
 @dp.message_handler(commands=['getid'])
 async def get_chat_id(message: types.Message):
-    await message.reply(f"ID цього чату (скопіюйте в код): `{message.chat.id}`", parse_mode="Markdown")
+    await message.reply(f"ID цього чату: `{message.chat.id}`", parse_mode="Markdown")
 
 # --- 1. ПРАЙС-ЛИСТ ---
 @dp.message_handler(lambda msg: msg.text == "📄 Прайс-лист")
@@ -90,21 +90,21 @@ async def process_subject(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['subject'] = message.text
     await OrderState.next()
-    await message.answer("4️⃣ Напишіть номер роботи та тему (або просто опишіть завдання):")
+    await message.answer("4️⃣ Опишіть завдання (номер, тема) або просто відправте умови:")
 
 @dp.message_handler(state=OrderState.waiting_for_details)
 async def process_details(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['details'] = message.text
         
-        # Повідомлення для адмінів
+        # Формуємо красивий звіт для адмінів
         report = (
             f"⚡️ <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n\n"
             f"👤 <b>Від:</b> {data['name']} (@{message.from_user.username})\n"
             f"🎓 <b>Група:</b> {data['group']}\n"
             f"📚 <b>Предмет:</b> {data['subject']}\n"
             f"📝 <b>Деталі:</b> {data['details']}\n\n"
-            f"ℹ️ <i>Щоб відповісти, натисніть Reply на це повідомлення</i>\n"
+            f"ℹ️ <i>Щоб відповісти клієнту, натисніть REPLY на це повідомлення.</i>\n"
             f"🆔 <code>{message.from_user.id}</code>"
         )
     
@@ -112,59 +112,72 @@ async def process_details(message: types.Message, state: FSMContext):
         await bot.send_message(ADMIN_GROUP_ID, report, parse_mode="HTML")
     
     await state.finish()
-    await message.answer("✅ Замовлення надіслано! Менеджер скоро зв'яжеться з вами.", reply_markup=get_main_keyboard())
+    await message.answer("✅ Замовлення прийнято! Ми зв'яжемося з вами найближчим часом.", reply_markup=get_main_keyboard())
 
 # --- 3. ПІДТРИМКА ---
 @dp.message_handler(lambda msg: msg.text == "💬 Підтримка", state="*")
 async def start_support(message: types.Message):
     await SupportState.waiting_for_message.set()
     await message.answer(
-        "✍️ Напишіть ваше питання.\n"
-        "Ми перешлемо його адміністратору.", 
+        "✍️ Напишіть ваше повідомлення.\n"
+        "Можна надсилати текст, фото або файли.", 
         reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Скасувати")
     )
 
 @dp.message_handler(lambda msg: msg.text == "🔙 Скасувати", state=SupportState.waiting_for_message)
 async def cancel_support(message: types.Message, state: FSMContext):
     await state.finish()
-    await message.answer("Скасовано.", reply_markup=get_main_keyboard())
+    await message.answer("Діалог завершено.", reply_markup=get_main_keyboard())
 
 @dp.message_handler(state=SupportState.waiting_for_message, content_types=types.ContentTypes.ANY)
 async def process_support_msg(message: types.Message, state: FSMContext):
     if ADMIN_GROUP_ID != 0:
+        # Пересилаємо повідомлення адмінам
         forward_text = (
             f"📩 <b>ПОВІДОМЛЕННЯ ВІД КОРИСТУВАЧА</b>\n"
-            f"👤 {message.from_user.full_name} (@{message.from_user.username})\n\n"
-            f"{message.text if message.text else '[Файл/Фото]'}\n\n"
-            f"🆔 <code>{message.from_user.id}</code>"
+            f"👤 {message.from_user.full_name} (@{message.from_user.username})\n"
+            f"🆔 <code>{message.from_user.id}</code>\n"
+            f"⬇️ <i>Відповідайте на повідомлення нижче:</i>"
         )
         await bot.send_message(ADMIN_GROUP_ID, forward_text, parse_mode="HTML")
-        if not message.text:
-            await message.forward(ADMIN_GROUP_ID)
+        # Пересилаємо саме повідомлення (щоб було видно фото/файл)
+        await message.forward(ADMIN_GROUP_ID)
     
     await state.finish()
     await message.answer("✅ Надіслано! Чекайте на відповідь.", reply_markup=get_main_keyboard())
 
-# --- 4. ВІДПОВІДЬ АДМІНА (REPLY) ---
+# --- 4. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ) ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def admin_reply_handler(message: types.Message):
     try:
-        # Витягуємо ID користувача з повідомлення, на яке відповіли
-        reply_text = message.reply_to_message.text or message.reply_to_message.caption
-        if "🆔" in reply_text:
-            user_id = int(reply_text.split("<code>")[1].split("</code>")[0])
+        # 1. Пробуємо знайти ID у тексті повідомлення (якщо це заявка)
+        reply_msg = message.reply_to_message
+        user_id = None
+        
+        # Перевіряємо текст реплаю
+        text_to_check = reply_msg.text or reply_msg.caption or ""
+        
+        if "🆔" in text_to_check:
+            # Витягуємо ID з тегів <code>
+            user_id = int(text_to_check.split("<code>")[1].split("</code>")[0])
+        
+        # 2. Якщо це переслане повідомлення (від підтримки), беремо ID з нього
+        elif reply_msg.forward_from:
+            user_id = reply_msg.forward_from.id
             
-            # Що відправляємо користувачу
-            reply_to_user = f"🔔 <b>Відповідь від LabHub:</b>\n\n{message.text}"
-            
-            await bot.send_message(user_id, reply_to_user, parse_mode="HTML")
-            await message.reply("✅ Відповідь доставлена!")
+        if user_id:
+            # Копіюємо повідомлення адміна користувачу (текст, фото, стікер - все)
+            await message.copy_to(user_id)
+            await message.reply("✅ Відповідь надіслано!")
         else:
-            await message.reply("⚠️ Не можу знайти ID користувача в цьому повідомленні.")
-    except Exception as e:
-        pass # Ігноруємо помилки, якщо це просто розмова між адмінами
+            # Якщо не знайшли ID, ігноруємо (може адміни просто спілкуються між собою)
+            pass 
 
-# --- СЕРВЕР RENDER ---
+    except Exception as e:
+        # Якщо сталася помилка (наприклад, юзер заблокував бота), пишемо про це в групу
+        await message.reply(f"❌ Не вдалося надіслати: {e}")
+
+# --- СЕРВЕР ---
 async def on_startup(dp):
     app = web.Application()
     app.add_routes([web.get('/', lambda req: web.Response(text="Bot is alive!"))])

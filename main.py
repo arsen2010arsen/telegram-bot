@@ -81,14 +81,16 @@ async def start_order(message: types.Message, state: FSMContext):
     await OrderState.waiting_for_name.set()
     async with state.proxy() as data:
         data['is_urgent'] = False
-    await message.answer("1️⃣ Як вас звати? (Ім'я та прізвище)", reply_markup=types.ReplyKeyboardRemove())
+    # 👇 ЗМІНЕНО ТУТ
+    await message.answer("1️⃣ Введіть ваше ПІБ (Прізвище, Ім'я, По батькові):", reply_markup=types.ReplyKeyboardRemove())
 
 @dp.message_handler(lambda msg: msg.text == "🔥 Термінове замовлення", state="*")
 async def start_urgent_order(message: types.Message, state: FSMContext):
     await OrderState.waiting_for_name.set()
     async with state.proxy() as data:
         data['is_urgent'] = True
-    await message.answer("🚀 <b>Термінове замовлення!</b>\n\n1️⃣ Як вас звати?", parse_mode="HTML", reply_markup=types.ReplyKeyboardRemove())
+    # 👇 І ТУТ ЗМІНЕНО
+    await message.answer("🚀 <b>Термінове замовлення!</b>\n\n1️⃣ Введіть ваше ПІБ (Прізвище, Ім'я, По батькові):", parse_mode="HTML", reply_markup=types.ReplyKeyboardRemove())
 
 # --- ЕТАПИ АНКЕТИ ---
 @dp.message_handler(state=OrderState.waiting_for_name)
@@ -116,13 +118,11 @@ async def process_subject(message: types.Message, state: FSMContext):
 async def process_teacher(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['teacher'] = message.text
-        # Ініціалізуємо списки для файлів та опису
         data['media_messages'] = [] 
         data['description_parts'] = []
         
     await OrderState.next()
     
-    # Спеціальна клавіатура для завершення
     finish_kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     finish_kb.add("✅ Відправити замовлення")
     
@@ -137,30 +137,21 @@ async def process_teacher(message: types.Message, state: FSMContext):
 # --- ЗБІР ФАЙЛІВ ТА ФІНІШ ---
 @dp.message_handler(state=OrderState.waiting_for_details, content_types=types.ContentTypes.ANY)
 async def process_details_collect(message: types.Message, state: FSMContext):
-    # Якщо натиснули кнопку - відправляємо
     if message.text == "✅ Відправити замовлення":
         await finish_order_procedure(message, state)
         return
 
-    # Якщо скинули щось інше - зберігаємо
     async with state.proxy() as data:
-        # Якщо це текст (і не команда), додаємо до опису
         if message.text:
             data['description_parts'].append(message.text)
         
-        # Якщо це медіа (фото, документ, фото з підписом)
         if message.content_type != 'text':
-            # Зберігаємо ID повідомлення, щоб потім переслати
             data['media_messages'].append(message.message_id)
-            # Якщо у фото є підпис, додаємо його до опису
             if message.caption:
                 data['description_parts'].append(message.caption)
-    
-    # Можна нічого не відповідати, щоб не спамити, або поставити реакцію (якщо версія дозволяє)
 
 async def finish_order_procedure(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
-        # Збираємо весь текст опису в одну купу
         full_details = "\n".join(data.get('description_parts', []))
         if not full_details:
             full_details = "[Без текстового опису]"
@@ -170,7 +161,7 @@ async def finish_order_procedure(message: types.Message, state: FSMContext):
 
         report = (
             f"<b>{title}</b>\n\n"
-            f"👤 <b>Від:</b> {data['name']} (@{message.from_user.username})\n"
+            f"👤 <b>ПІБ:</b> {data['name']} (@{message.from_user.username})\n"
             f"🎓 <b>Група:</b> {data['group']}\n"
             f"📚 <b>Предмет:</b> {data['subject']}\n"
             f"👨‍🏫 <b>Викладач:</b> {data['teacher']}\n"
@@ -182,20 +173,17 @@ async def finish_order_procedure(message: types.Message, state: FSMContext):
         media_ids = data.get('media_messages', [])
 
     if ADMIN_GROUP_ID != 0:
-        # 1. Відправляємо головний звіт
         await bot.send_message(ADMIN_GROUP_ID, report, parse_mode="HTML")
         
-        # 2. Пересилаємо всі зібрані файли/фото слідом
         if media_ids:
             for msg_id in media_ids:
                 try:
-                    # Пересилаємо з чату користувача в групу адмінів
                     await bot.forward_message(ADMIN_GROUP_ID, message.chat.id, msg_id)
                 except Exception:
                     pass
 
     await state.finish()
-    await message.answer("✅ Ваше замовлення (і всі файли) прийнято! Очікуйте відповідь.", reply_markup=get_main_keyboard())
+    await message.answer("✅ Ваше замовлення прийнято! Очікуйте відповідь.", reply_markup=get_main_keyboard())
 
 
 # --- 5. ПІДТРИМКА ---

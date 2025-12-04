@@ -18,7 +18,12 @@ async def start_cmd(message: types.Message):
 # Реакція на кнопку
 @dp.message_handler(lambda msg: msg.text == "📄 Прайс-лист")
 async def price_btn(message: types.Message):
-    await message.answer("Лабораторна робота 🟡 50 грн\nПрактична робота 🟡 50 грн")
+    response_text = (
+        "🔬 Лабораторна робота — <b>50 грн</b>\n"
+        "📝 Практична робота — <b>50 грн</b>"
+    )
+    # Важливо: додаємо parse_mode="HTML", щоб працював жирний шрифт
+    await message.answer(response_text, parse_mode="HTML")
 
 # --- ОСЬ ЦІЄЇ ЧАСТИНИ У ВАС НЕМАЄ ---
 async def on_startup(dp):
@@ -33,3 +38,4 @@ async def on_startup(dp):
 if __name__ == "__main__":
     # Тут теж важливо: додано параметр on_startup
     executor.start_polling(dp, on_startup=on_startup)
+

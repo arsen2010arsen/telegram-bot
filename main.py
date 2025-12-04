@@ -8,10 +8,10 @@ import logging
 
 # --- НАЛАШТУВАННЯ ---
 
-# 👇 ВСТАВТЕ СЮДИ ВАШ ТОКЕН
+# 👇 ВСТАВТЕ СЮДИ ВАШ СПРАВЖНІЙ ТОКЕН!
 TOKEN = "8516307940:AAEhZ84NunCwC470Au2LQTDTPT2rDzHTR_s"
 
-# ВАШ ID ГРУПИ
+# ВАШ ID ГРУПИ (Вже правильний)
 ADMIN_GROUP_ID = -1003308912052
 
 logging.basicConfig(level=logging.INFO)
@@ -100,14 +100,15 @@ async def process_subject(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['subject'] = message.text
     await OrderState.next()
-    await message.answer("4️⃣ Опишіть завдання (номер, тема, ваш варіант/номер у списку) або прикріпіть файл:")
+    await message.answer("4️⃣ Опишіть завдання (номер, тема, ваш варіант/номер у списку) або прикріпіть фото/файл:")
 
-# ОБРОБКА ДЕТАЛЕЙ (ТЕКСТ АБО ФАЙЛ)
+# ОБРОБКА ДЕТАЛЕЙ (ТЕКСТ, ФОТО АБО ФАЙЛ)
+# content_types=types.ContentTypes.ANY дозволяє приймати все
 @dp.message_handler(state=OrderState.waiting_for_details, content_types=types.ContentTypes.ANY)
 async def process_details(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
-        # Якщо прислали файл, беремо підпис, або пишемо що це файл
-        msg_text = message.text or message.caption or "[Прикріплений файл/фото]"
+        # Якщо це текст, беремо текст. Якщо фото/файл, беремо підпис (caption).
+        msg_text = message.text or message.caption or "[Фото/Файл без опису]"
         data['details'] = msg_text
         
         report = (
@@ -116,14 +117,16 @@ async def process_details(message: types.Message, state: FSMContext):
             f"🎓 <b>Група:</b> {data['group']}\n"
             f"📚 <b>Предмет:</b> {data['subject']}\n"
             f"📝 <b>Деталі:</b> {data['details']}\n\n"
-            f"ℹ️ <i>Щоб відповісти клієнту, натисніть REPLY на це повідомлення.</i>\n"
+            f"ℹ️ <i>Щоб відповісти клієнту, натисніть REPLY на це повідомлення (або на фото нижче).</i>\n"
             f"🆔 <code>{message.from_user.id}</code>"
         )
     
     if ADMIN_GROUP_ID != 0:
+        # 1. Відправляємо звіт (текст з ID)
         await bot.send_message(ADMIN_GROUP_ID, report, parse_mode="HTML")
-        # Якщо студент скинув файл, пересилаємо його теж
-        if not message.text:
+        
+        # 2. Якщо студент скинув не текст (фото або файл), пересилаємо його слідом
+        if message.content_type != 'text':
             await message.forward(ADMIN_GROUP_ID)
     
     await state.finish()
@@ -159,38 +162,39 @@ async def process_support_msg(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("✅ Надіслано! Чекайте на відповідь.", reply_markup=get_main_keyboard())
 
-# --- 5. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ ФАЙЛОМ АБО ТЕКСТОМ) ---
+# --- 5. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ) ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def admin_reply_handler(message: types.Message):
     try:
         reply_msg = message.reply_to_message
         user_id = None
         
-        # Отримуємо текст оригінального повідомлення (навіть якщо це підпис до фото)
+        # Отримуємо текст, навіть якщо відповіли на фото з підписом
         text_to_check = reply_msg.text or reply_msg.caption or ""
         
-        # 1. Шукаємо ID через смайлик 🆔 (більш надійно для тексту)
+        # 1. Шукаємо ID в тексті повідомлення (по смайлику 🆔)
         if "🆔" in text_to_check:
-            # Розбиваємо текст по смайлику і беремо другу частину
             parts = text_to_check.split("🆔")
             if len(parts) > 1:
-                # Беремо перше слово після смайлика (це і є ID)
-                user_id = int(parts[1].strip().split()[0])
+                # Витягуємо цифри з тегів <code>
+                code_part = parts[1]
+                if "<code>" in code_part:
+                    user_id = int(code_part.split("<code>")[1].split("</code>")[0])
         
-        # 2. Або беремо ID з пересланого повідомлення
+        # 2. Якщо відповіли на переслане повідомлення (фото/файл від юзера)
         elif reply_msg.forward_from:
             user_id = reply_msg.forward_from.id
             
         if user_id:
-            # copy_to дозволяє копіювати будь-який контент (текст, фото, файл)
+            # copy_to копіює все: текст, фото, голосові
             await message.copy_to(user_id)
             await message.reply("✅ Відповідь надіслано!")
         else:
-            # Це просто розмова адмінів між собою, ігноруємо
-            pass
+            pass # Просто спілкування в чаті
 
     except Exception as e:
-        await message.reply(f"❌ Помилка: {e}")
+        # Тиха помилка (щоб не спамити в чат, якщо щось не так)
+        pass
 
 # --- СЕРВЕР ---
 async def on_startup(dp):

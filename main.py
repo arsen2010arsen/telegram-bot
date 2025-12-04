@@ -15,7 +15,7 @@ TOKEN = "8516307940:AAGBqIn662FbQXFBhwLesgtczeGtfcju4PA"
 # 2. Залийте код, зачекайте запуску ("Live").
 # 3. Напишіть у групу /getid, отримайте цифри.
 # 4. Замініть 0 на ці цифри (з мінусом).
-ADMIN_GROUP_ID = 0
+ADMIN_GROUP_ID = -1003308912052
 
 logging.basicConfig(level=logging.INFO)
 
@@ -189,3 +189,4 @@ async def on_startup(dp):
 
 if __name__ == "__main__":
     executor.start_polling(dp, on_startup=on_startup)
+

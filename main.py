@@ -7,14 +7,9 @@ import os
 import logging
 
 # --- НАЛАШТУВАННЯ ---
-# ВАШ ТОКЕН
-TOKEN = "8516307940:AAEhZ84NunCwC470Au2LQTDTPT2rDzHTR_s"
+TOKEN = "8516307940:AAGBqIn662FbQXFBhwLesgtczeGtfcju4PA"
 
-# ID ВАШОЇ ГРУПИ
-# 1. Спочатку залиште 0.
-# 2. Залийте код, зачекайте запуску ("Live").
-# 3. Напишіть у групу /getid, отримайте цифри.
-# 4. Замініть 0 на ці цифри (з мінусом).
+# ВАШ ID ГРУПИ (Вже вписаний)
 ADMIN_GROUP_ID = -1003308912052
 
 logging.basicConfig(level=logging.INFO)
@@ -37,7 +32,8 @@ class SupportState(StatesGroup):
 def get_main_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("📄 Прайс-лист", "📚 Замовити роботу")
-    keyboard.add("💬 Підтримка")
+    # Змінили назву кнопки тут:
+    keyboard.add("💬 Підтримка", "⚠️ Попередження")
     return keyboard
 
 # --- СТАРТ ---
@@ -65,7 +61,20 @@ async def price_btn(message: types.Message):
     )
     await message.answer(response_text, parse_mode="HTML")
 
-# --- 2. ЗАМОВИТИ РОБОТУ ---
+# --- 2. ПОПЕРЕДЖЕННЯ (ОНОВЛЕНА КНОПКА) ---
+@dp.message_handler(lambda msg: msg.text == "⚠️ Попередження")
+async def warning_btn(message: types.Message):
+    warning_text = (
+        "<b>⚠️ ВІДМОВА ВІД ВІДПОВІДАЛЬНОСТІ</b>\n\n"
+        "Адміністрація бота не несе відповідальності за можливі академічні наслідки, "
+        "включно з ситуаціями, коли викладач або навчальний заклад виявляє підозру "
+        "щодо походження поданих матеріалів.\n\n"
+        "Усі ризики, пов’язані з використанням отриманих матеріалів, "
+        "повністю покладаються на користувача."
+    )
+    await message.answer(warning_text, parse_mode="HTML")
+
+# --- 3. ЗАМОВИТИ РОБОТУ ---
 @dp.message_handler(lambda msg: msg.text == "📚 Замовити роботу", state="*")
 async def start_order(message: types.Message):
     await OrderState.waiting_for_name.set()
@@ -97,7 +106,6 @@ async def process_details(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['details'] = message.text
         
-        # Формуємо красивий звіт для адмінів
         report = (
             f"⚡️ <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n\n"
             f"👤 <b>Від:</b> {data['name']} (@{message.from_user.username})\n"
@@ -114,7 +122,7 @@ async def process_details(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("✅ Замовлення прийнято! Ми зв'яжемося з вами найближчим часом.", reply_markup=get_main_keyboard())
 
-# --- 3. ПІДТРИМКА ---
+# --- 4. ПІДТРИМКА ---
 @dp.message_handler(lambda msg: msg.text == "💬 Підтримка", state="*")
 async def start_support(message: types.Message):
     await SupportState.waiting_for_message.set()
@@ -132,7 +140,6 @@ async def cancel_support(message: types.Message, state: FSMContext):
 @dp.message_handler(state=SupportState.waiting_for_message, content_types=types.ContentTypes.ANY)
 async def process_support_msg(message: types.Message, state: FSMContext):
     if ADMIN_GROUP_ID != 0:
-        # Пересилаємо повідомлення адмінам
         forward_text = (
             f"📩 <b>ПОВІДОМЛЕННЯ ВІД КОРИСТУВАЧА</b>\n"
             f"👤 {message.from_user.full_name} (@{message.from_user.username})\n"
@@ -140,42 +147,29 @@ async def process_support_msg(message: types.Message, state: FSMContext):
             f"⬇️ <i>Відповідайте на повідомлення нижче:</i>"
         )
         await bot.send_message(ADMIN_GROUP_ID, forward_text, parse_mode="HTML")
-        # Пересилаємо саме повідомлення (щоб було видно фото/файл)
         await message.forward(ADMIN_GROUP_ID)
     
     await state.finish()
     await message.answer("✅ Надіслано! Чекайте на відповідь.", reply_markup=get_main_keyboard())
 
-# --- 4. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ) ---
+# --- 5. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ) ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def admin_reply_handler(message: types.Message):
     try:
-        # 1. Пробуємо знайти ID у тексті повідомлення (якщо це заявка)
         reply_msg = message.reply_to_message
         user_id = None
-        
-        # Перевіряємо текст реплаю
         text_to_check = reply_msg.text or reply_msg.caption or ""
         
         if "🆔" in text_to_check:
-            # Витягуємо ID з тегів <code>
             user_id = int(text_to_check.split("<code>")[1].split("</code>")[0])
-        
-        # 2. Якщо це переслане повідомлення (від підтримки), беремо ID з нього
         elif reply_msg.forward_from:
             user_id = reply_msg.forward_from.id
             
         if user_id:
-            # Копіюємо повідомлення адміна користувачу (текст, фото, стікер - все)
             await message.copy_to(user_id)
             await message.reply("✅ Відповідь надіслано!")
-        else:
-            # Якщо не знайшли ID, ігноруємо (може адміни просто спілкуються між собою)
-            pass 
-
     except Exception as e:
-        # Якщо сталася помилка (наприклад, юзер заблокував бота), пишемо про це в групу
-        await message.reply(f"❌ Не вдалося надіслати: {e}")
+        pass
 
 # --- СЕРВЕР ---
 async def on_startup(dp):
@@ -189,5 +183,3 @@ async def on_startup(dp):
 
 if __name__ == "__main__":
     executor.start_polling(dp, on_startup=on_startup)
-
-

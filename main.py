@@ -7,7 +7,7 @@ import os
 import logging
 
 # --- НАЛАШТУВАННЯ ---
-TOKEN = "8516307940:AAGBqIn662FbQXFBhwLesgtczeGtfcju4PA"
+TOKEN = "8516307940:AAEhZ84NunCwC470Au2LQTDTPT2rDzHTR_s"
 
 # ВАШ ID ГРУПИ (Вже вписаний)
 ADMIN_GROUP_ID = -1003308912052
@@ -183,3 +183,4 @@ async def on_startup(dp):
 
 if __name__ == "__main__":
     executor.start_polling(dp, on_startup=on_startup)
+

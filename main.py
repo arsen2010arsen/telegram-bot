@@ -10,10 +10,10 @@ import asyncio
 
 # --- НАЛАШТУВАННЯ ---
 
-# 👇 ВСТАВТЕ СЮДИ ВАШ ТОКЕН!
+# 👇 ВСТАВТЕ СЮДИ ВАШ ТОКЕН
 TOKEN = "8516307940:AAHecLuAJqpmlv0Oz-morWAR7z_1Nr8nmcE"
 
-# ВАШ ID ГРУПИ (Вже вписаний)
+# ВАШ ID ГРУПИ
 ADMIN_GROUP_ID = -1003308912052
 
 logging.basicConfig(level=logging.INFO)
@@ -52,7 +52,7 @@ async def start(message: types.Message, state: FSMContext):
 async def get_id(message: types.Message):
     await message.reply(f"ID: `{message.chat.id}`", parse_mode="Markdown")
 
-# --- ПРАЙС-ЛИСТ ---
+# --- КНОПКИ ---
 @dp.message_handler(lambda m: m.text == "📄 Прайс-лист")
 async def price(m: types.Message):
     text = (
@@ -62,7 +62,6 @@ async def price(m: types.Message):
     )
     await m.answer(text, parse_mode="HTML")
 
-# --- ПОПЕРЕДЖЕННЯ (НОВИЙ ТЕКСТ) ---
 @dp.message_handler(lambda m: m.text == "⚠️ Попередження")
 async def warn(m: types.Message):
     text = (
@@ -138,4 +137,59 @@ async def s5(m: types.Message, state: FSMContext):
         return
 
     async with state.proxy() as d:
-        if m.text: d['desc'].append(m
+        if m.text: d['desc'].append(m.text)
+        if m.content_type != 'text':
+            d['media'].append(m.message_id)
+            if m.caption: d['desc'].append(m.caption)
+
+# --- ПІДТРИМКА ---
+@dp.message_handler(lambda m: m.text == "💬 Підтримка", state="*")
+async def supp(m: types.Message):
+    await SupportState.waiting_for_message.set()
+    await m.answer("✍️ Пишіть питання:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Скасувати"))
+
+@dp.message_handler(lambda m: m.text == "🔙 Скасувати", state=SupportState.waiting_for_message)
+async def canc(m: types.Message, state: FSMContext):
+    await state.finish()
+    await m.answer("Скасовано.", reply_markup=get_main_keyboard())
+
+@dp.message_handler(state=SupportState.waiting_for_message, content_types=types.ContentTypes.ANY)
+async def supp_msg(m: types.Message, state: FSMContext):
+    if ADMIN_GROUP_ID != 0:
+        await bot.send_message(ADMIN_GROUP_ID, f"📩 <b>ПИТАННЯ</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
+        await m.forward(ADMIN_GROUP_ID)
+    await state.finish()
+    await m.answer("✅ Надіслано!", reply_markup=get_main_keyboard())
+
+# --- АДМІН ВІДПОВІДАЄ ---
+@dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
+async def reply(m: types.Message):
+    try:
+        rep = m.reply_to_message
+        txt = rep.text or rep.caption or ""
+        uid = None
+        if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
+        elif rep.forward_from: uid = rep.forward_from.id
+        
+        if uid:
+            await m.copy_to(uid)
+            await m.reply("✅ Відповідь надіслано!")
+        else:
+            await m.reply("❌ Не бачу ID. Переконайтеся, що відповідаєте на повідомлення з 🆔")
+    except Exception as e:
+        await m.reply(f"❌ Помилка: {e}")
+
+# --- СЕРВЕР ---
+async def keep_alive(request):
+    return web.Response(text="I am alive!")
+
+async def on_startup(dp):
+    app = web.Application()
+    app.router.add_get('/', keep_alive)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
+    await site.start()
+
+if __name__ == '__main__':
+    executor.start_polling(dp, on_startup=on_startup)

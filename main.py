@@ -8,7 +8,7 @@ import logging
 
 # --- НАЛАШТУВАННЯ ---
 
-# 👇 ВСТАВТЕ СЮДИ ВАШ СПРАВЖНІЙ ТОКЕН!
+# 👇 ВСТАВТЕ СЮДИ ВАШ РОБОЧИЙ ТОКЕН!
 TOKEN = "8516307940:AAEhZ84NunCwC470Au2LQTDTPT2rDzHTR_s"
 
 # ВАШ ID ГРУПИ (Вже правильний)
@@ -25,6 +25,7 @@ class OrderState(StatesGroup):
     waiting_for_name = State()
     waiting_for_group = State()
     waiting_for_subject = State()
+    waiting_for_teacher = State()
     waiting_for_details = State()
 
 class SupportState(StatesGroup):
@@ -33,7 +34,11 @@ class SupportState(StatesGroup):
 # --- КЛАВІАТУРА ---
 def get_main_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    # Ряд 1: Прайс і Звичайне замовлення
     keyboard.add("📄 Прайс-лист", "📚 Замовити роботу")
+    # Ряд 2: ТЕРМІНОВЕ ЗАМОВЛЕННЯ (Нова кнопка)
+    keyboard.add("🔥 Термінове замовлення")
+    # Ряд 3: Підтримка і Попередження
     keyboard.add("💬 Підтримка", "⚠️ Попередження")
     return keyboard
 
@@ -53,12 +58,13 @@ async def start_cmd(message: types.Message, state: FSMContext):
 async def get_chat_id(message: types.Message):
     await message.reply(f"ID цього чату: `{message.chat.id}`", parse_mode="Markdown")
 
-# --- 1. ПРАЙС-ЛИСТ ---
+# --- 1. ПРАЙС-ЛИСТ (ОНОВЛЕНИЙ) ---
 @dp.message_handler(lambda msg: msg.text == "📄 Прайс-лист")
 async def price_btn(message: types.Message):
     response_text = (
-        "🔬 Лабораторна робота — <b>50 грн</b>\n"
-        "📝 Практична робота — <b>50 грн</b>"
+        "🔬 Лабораторна робота — <b>50 грн / шт.</b>\n"
+        "📝 Практична робота — <b>50 грн / шт.</b>\n\n"
+        "⏳ <i>Термінове виконання оплачується за додаткову суму (узгоджується індивідуально).</i>"
     )
     await message.answer(response_text, parse_mode="HTML")
 
@@ -75,11 +81,35 @@ async def warning_btn(message: types.Message):
     )
     await message.answer(warning_text, parse_mode="HTML")
 
-# --- 3. ЗАМОВИТИ РОБОТУ ---
+# --- 3. ЗАМОВИТИ РОБОТУ (ЗВИЧАЙНЕ) ---
 @dp.message_handler(lambda msg: msg.text == "📚 Замовити роботу", state="*")
-async def start_order(message: types.Message):
+async def start_order(message: types.Message, state: FSMContext):
     await OrderState.waiting_for_name.set()
+    # Запам'ятовуємо, що це НЕ термінове
+    async with state.proxy() as data:
+        data['is_urgent'] = False
+        
     await message.answer("1️⃣ Як вас звати? (Ім'я та прізвище)", reply_markup=types.ReplyKeyboardRemove())
+
+# --- 4. ТЕРМІНОВЕ ЗАМОВЛЕННЯ (НОВЕ) ---
+@dp.message_handler(lambda msg: msg.text == "🔥 Термінове замовлення", state="*")
+async def start_urgent_order(message: types.Message, state: FSMContext):
+    await OrderState.waiting_for_name.set()
+    # Запам'ятовуємо, що це ТЕРМІНОВЕ
+    async with state.proxy() as data:
+        data['is_urgent'] = True
+    
+    await message.answer(
+        "🚀 <b>Ви обрали термінове замовлення.</b>\n"
+        "Ми візьмемо це завдання в пріоритет. Вартість буде вищою за звичайну.\n\n"
+        "Заповніть анкету, і ми швидко оцінимо роботу.\n"
+        "👇👇👇\n\n"
+        "1️⃣ Як вас звати? (Ім'я та прізвище)", 
+        reply_markup=types.ReplyKeyboardRemove(),
+        parse_mode="HTML"
+    )
+
+# --- ЕТАПИ АНКЕТИ (СПІЛЬНІ ДЛЯ ОБОХ ТИПІВ) ---
 
 @dp.message_handler(state=OrderState.waiting_for_name)
 async def process_name(message: types.Message, state: FSMContext):
@@ -100,39 +130,46 @@ async def process_subject(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['subject'] = message.text
     await OrderState.next()
-    await message.answer("4️⃣ Опишіть завдання (номер, тема, ваш варіант/номер у списку) або прикріпіть фото/файл:")
+    await message.answer("4️⃣ Напишіть прізвище викладача (та ініціали, якщо знаєте):")
 
-# ОБРОБКА ДЕТАЛЕЙ (ТЕКСТ, ФОТО АБО ФАЙЛ)
-# content_types=types.ContentTypes.ANY дозволяє приймати все
+@dp.message_handler(state=OrderState.waiting_for_teacher)
+async def process_teacher(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['teacher'] = message.text
+    await OrderState.next()
+    await message.answer("5️⃣ Опишіть завдання (номер, тема, ваш варіант/номер у списку) або прикріпіть фото/файл:")
+
+# ФІНІШ АНКЕТИ
 @dp.message_handler(state=OrderState.waiting_for_details, content_types=types.ContentTypes.ANY)
 async def process_details(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
-        # Якщо це текст, беремо текст. Якщо фото/файл, беремо підпис (caption).
         msg_text = message.text or message.caption or "[Фото/Файл без опису]"
         data['details'] = msg_text
         
+        # Перевіряємо, чи це термінове замовлення, і змінюємо заголовок
+        is_urgent = data.get('is_urgent', False)
+        title = "🔥🔥🔥 ТЕРМІНОВЕ ЗАМОВЛЕННЯ! 🔥🔥🔥" if is_urgent else "⚡️ НОВЕ ЗАМОВЛЕННЯ!"
+        
         report = (
-            f"⚡️ <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n\n"
+            f"<b>{title}</b>\n\n"
             f"👤 <b>Від:</b> {data['name']} (@{message.from_user.username})\n"
             f"🎓 <b>Група:</b> {data['group']}\n"
             f"📚 <b>Предмет:</b> {data['subject']}\n"
+            f"👨‍🏫 <b>Викладач:</b> {data['teacher']}\n"
             f"📝 <b>Деталі:</b> {data['details']}\n\n"
-            f"ℹ️ <i>Щоб відповісти клієнту, натисніть REPLY на це повідомлення (або на фото нижче).</i>\n"
+            f"ℹ️ <i>Щоб відповісти клієнту, натисніть REPLY на це повідомлення.</i>\n"
             f"🆔 <code>{message.from_user.id}</code>"
         )
     
     if ADMIN_GROUP_ID != 0:
-        # 1. Відправляємо звіт (текст з ID)
         await bot.send_message(ADMIN_GROUP_ID, report, parse_mode="HTML")
-        
-        # 2. Якщо студент скинув не текст (фото або файл), пересилаємо його слідом
         if message.content_type != 'text':
             await message.forward(ADMIN_GROUP_ID)
     
     await state.finish()
     await message.answer("✅ Замовлення прийнято! Ми зв'яжемося з вами найближчим часом.", reply_markup=get_main_keyboard())
 
-# --- 4. ПІДТРИМКА ---
+# --- 5. ПІДТРИМКА ---
 @dp.message_handler(lambda msg: msg.text == "💬 Підтримка", state="*")
 async def start_support(message: types.Message):
     await SupportState.waiting_for_message.set()
@@ -162,38 +199,30 @@ async def process_support_msg(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("✅ Надіслано! Чекайте на відповідь.", reply_markup=get_main_keyboard())
 
-# --- 5. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ) ---
+# --- 6. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ) ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def admin_reply_handler(message: types.Message):
     try:
         reply_msg = message.reply_to_message
         user_id = None
-        
-        # Отримуємо текст, навіть якщо відповіли на фото з підписом
         text_to_check = reply_msg.text or reply_msg.caption or ""
         
-        # 1. Шукаємо ID в тексті повідомлення (по смайлику 🆔)
         if "🆔" in text_to_check:
             parts = text_to_check.split("🆔")
             if len(parts) > 1:
-                # Витягуємо цифри з тегів <code>
                 code_part = parts[1]
                 if "<code>" in code_part:
                     user_id = int(code_part.split("<code>")[1].split("</code>")[0])
-        
-        # 2. Якщо відповіли на переслане повідомлення (фото/файл від юзера)
         elif reply_msg.forward_from:
             user_id = reply_msg.forward_from.id
             
         if user_id:
-            # copy_to копіює все: текст, фото, голосові
             await message.copy_to(user_id)
             await message.reply("✅ Відповідь надіслано!")
         else:
-            pass # Просто спілкування в чаті
+            pass
 
     except Exception as e:
-        # Тиха помилка (щоб не спамити в чат, якщо щось не так)
         pass
 
 # --- СЕРВЕР ---

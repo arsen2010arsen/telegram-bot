@@ -7,9 +7,11 @@ import os
 import logging
 
 # --- НАЛАШТУВАННЯ ---
+
+# 👇 ВСТАВТЕ СЮДИ ВАШ ТОКЕН
 TOKEN = "8516307940:AAEhZ84NunCwC470Au2LQTDTPT2rDzHTR_s"
 
-# ВАШ ID ГРУПИ (Вже вписаний)
+# ВАШ ID ГРУПИ
 ADMIN_GROUP_ID = -1003308912052
 
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +34,6 @@ class SupportState(StatesGroup):
 def get_main_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("📄 Прайс-лист", "📚 Замовити роботу")
-    # Змінили назву кнопки тут:
     keyboard.add("💬 Підтримка", "⚠️ Попередження")
     return keyboard
 
@@ -61,7 +62,7 @@ async def price_btn(message: types.Message):
     )
     await message.answer(response_text, parse_mode="HTML")
 
-# --- 2. ПОПЕРЕДЖЕННЯ (ОНОВЛЕНА КНОПКА) ---
+# --- 2. ПОПЕРЕДЖЕННЯ ---
 @dp.message_handler(lambda msg: msg.text == "⚠️ Попередження")
 async def warning_btn(message: types.Message):
     warning_text = (
@@ -99,12 +100,15 @@ async def process_subject(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['subject'] = message.text
     await OrderState.next()
-    await message.answer("4️⃣ Опишіть завдання (номер, тема) або просто відправте умови:")
+    await message.answer("4️⃣ Опишіть завдання (номер, тема, ваш варіант/номер у списку) або прикріпіть файл:")
 
-@dp.message_handler(state=OrderState.waiting_for_details)
+# ОБРОБКА ДЕТАЛЕЙ (ТЕКСТ АБО ФАЙЛ)
+@dp.message_handler(state=OrderState.waiting_for_details, content_types=types.ContentTypes.ANY)
 async def process_details(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
-        data['details'] = message.text
+        # Якщо прислали файл, беремо підпис, або пишемо що це файл
+        msg_text = message.text or message.caption or "[Прикріплений файл/фото]"
+        data['details'] = msg_text
         
         report = (
             f"⚡️ <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n\n"
@@ -118,6 +122,9 @@ async def process_details(message: types.Message, state: FSMContext):
     
     if ADMIN_GROUP_ID != 0:
         await bot.send_message(ADMIN_GROUP_ID, report, parse_mode="HTML")
+        # Якщо студент скинув файл, пересилаємо його теж
+        if not message.text:
+            await message.forward(ADMIN_GROUP_ID)
     
     await state.finish()
     await message.answer("✅ Замовлення прийнято! Ми зв'яжемося з вами найближчим часом.", reply_markup=get_main_keyboard())
@@ -152,24 +159,38 @@ async def process_support_msg(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("✅ Надіслано! Чекайте на відповідь.", reply_markup=get_main_keyboard())
 
-# --- 5. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ) ---
+# --- 5. РЕЖИМ ЧАТУ (АДМІН ВІДПОВІДАЄ ФАЙЛОМ АБО ТЕКСТОМ) ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def admin_reply_handler(message: types.Message):
     try:
         reply_msg = message.reply_to_message
         user_id = None
+        
+        # Отримуємо текст оригінального повідомлення (навіть якщо це підпис до фото)
         text_to_check = reply_msg.text or reply_msg.caption or ""
         
+        # 1. Шукаємо ID через смайлик 🆔 (більш надійно для тексту)
         if "🆔" in text_to_check:
-            user_id = int(text_to_check.split("<code>")[1].split("</code>")[0])
+            # Розбиваємо текст по смайлику і беремо другу частину
+            parts = text_to_check.split("🆔")
+            if len(parts) > 1:
+                # Беремо перше слово після смайлика (це і є ID)
+                user_id = int(parts[1].strip().split()[0])
+        
+        # 2. Або беремо ID з пересланого повідомлення
         elif reply_msg.forward_from:
             user_id = reply_msg.forward_from.id
             
         if user_id:
+            # copy_to дозволяє копіювати будь-який контент (текст, фото, файл)
             await message.copy_to(user_id)
             await message.reply("✅ Відповідь надіслано!")
+        else:
+            # Це просто розмова адмінів між собою, ігноруємо
+            pass
+
     except Exception as e:
-        pass
+        await message.reply(f"❌ Помилка: {e}")
 
 # --- СЕРВЕР ---
 async def on_startup(dp):
@@ -183,4 +204,3 @@ async def on_startup(dp):
 
 if __name__ == "__main__":
     executor.start_polling(dp, on_startup=on_startup)
-

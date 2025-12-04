@@ -168,6 +168,7 @@ async def reply(m: types.Message):
         rep = m.reply_to_message
         txt = rep.text or rep.caption or ""
         uid = None
+        # Шукаємо ID через Regex (🆔 12345) або Forward
         if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
         elif rep.forward_from: uid = rep.forward_from.id
         
@@ -179,7 +180,7 @@ async def reply(m: types.Message):
     except Exception as e:
         await m.reply(f"❌ Помилка: {e}")
 
-# --- СЕРВЕР ---
+# --- СЕРВЕР (ЩОБ НЕ ВИМИКАВСЯ) ---
 async def keep_alive(request):
     return web.Response(text="I am alive!")
 

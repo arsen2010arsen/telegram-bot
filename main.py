@@ -43,14 +43,12 @@ def get_main_keyboard():
     return kb
 
 def get_cancel_kb():
-    # Для етапів заповнення анкети
     return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🚫 Скасувати")
 
 def get_finish_chat_kb():
-    # Для режимів переписки (Підтримка, Після замовлення)
     return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🏁 Закінчити переписку")
 
-# --- ГЛОБАЛЬНЕ СКАСУВАННЯ (Реагує на обидві кнопки) ---
+# --- ГЛОБАЛЬНЕ СКАСУВАННЯ ---
 @dp.message_handler(lambda m: m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"], state="*")
 async def global_cancel(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -138,7 +136,6 @@ async def s4(m: types.Message, state: FSMContext):
         kb = get_cancel_kb().add("✅ Відправити замовлення")
         await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=kb)
 
-# Етап дедлайну (тільки для термінових)
 @dp.message_handler(state=OrderState.waiting_for_deadline)
 async def s4_deadline(m: types.Message, state: FSMContext):
     async with state.proxy() as d:
@@ -181,9 +178,7 @@ async def s5(m: types.Message, state: FSMContext):
                     try: await bot.forward_message(ADMIN_GROUP_ID, m.chat.id, mid)
                     except: pass
         
-        # Переходимо в режим чату
         await SupportState.waiting_for_message.set()
-        
         await m.answer(
             "✅ <b>Замовлення прийнято!</b>\n\n"
             "💬 <b>Режим чату активний.</b>\n"
@@ -194,7 +189,6 @@ async def s5(m: types.Message, state: FSMContext):
         )
         return
 
-    # Накопичення
     async with state.proxy() as d:
         if m.text: d['desc'].append(m.text)
         if m.content_type != 'text':
@@ -212,7 +206,7 @@ async def supp(m: types.Message):
         reply_markup=get_finish_chat_kb()
     )
 
-# --- ОБРОБКА ПОВІДОМЛЕНЬ У ЧАТІ ---
+# --- ОБРОБКА ПОВІДОМЛЕНЬ ВІД КОРИСТУВАЧА ---
 @dp.message_handler(state=SupportState.waiting_for_message, content_types=types.ContentTypes.ANY)
 async def supp_msg(m: types.Message, state: FSMContext):
     if m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"]:
@@ -224,29 +218,33 @@ async def supp_msg(m: types.Message, state: FSMContext):
         await bot.send_message(ADMIN_GROUP_ID, f"📩 <b>ПОВІДОМЛЕННЯ</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
         await m.forward(ADMIN_GROUP_ID)
 
-# --- REPLY ---
-@dp.message_handler(lambda m: m.reply_to_message and m.reply_to_message.from_user.id == bot.id, content_types=types.ContentTypes.ANY)
-async def direct_reply(m: types.Message):
+# --- ОБРОБКА REPLY (КОЛИ КОРИСТУВАЧ ПРОСТО ВІДПОВІДАЄ В ПП) ---
+# ЦЕЙ ХЕНДЛЕР ПРАЦЮЄ ТІЛЬКИ В ОСОБИСТИХ ЧАТАХ (НЕ В ГРУПІ)
+@dp.message_handler(lambda m: m.chat.type == 'private' and m.reply_to_message and m.reply_to_message.from_user.id == bot.id, content_types=types.ContentTypes.ANY)
+async def user_reply_to_admin(m: types.Message):
     if ADMIN_GROUP_ID != 0:
         await bot.send_message(ADMIN_GROUP_ID, f"↩️ <b>REPLY ВІД КОРИСТУВАЧА</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
         await m.forward(ADMIN_GROUP_ID)
     await m.answer("✅ Передано адміну.")
 
-# --- АДМІН ---
+# --- АДМІН ВІДПОВІДАЄ (ТІЛЬКИ В ГРУПІ) ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def reply(m: types.Message):
     try:
         rep = m.reply_to_message
         txt = rep.text or rep.caption or ""
         uid = None
+        # Шукаємо ID через Regex або Forward
         if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
         elif rep.forward_from: uid = rep.forward_from.id
         
         if uid:
             await m.copy_to(uid)
-            await m.reply("✅")
+            await m.reply("✅ Відповідь надіслано!")
         else:
-            await m.reply("❌ Не бачу ID.")
+            # Якщо адмін відповів на повідомлення без ID, просто ігноруємо
+            # або можна вивести повідомлення, що ID не знайдено
+            pass 
     except Exception as e:
         await m.reply(f"❌ Помилка: {e}")
 

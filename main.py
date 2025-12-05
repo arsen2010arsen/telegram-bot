@@ -10,8 +10,8 @@ import asyncio
 
 # --- НАЛАШТУВАННЯ ---
 
-# 👇 ВСТАВТЕ СЮДИ ВАШ ТОКЕН
-TOKEN = "8516307940:AAElyzuQ5VLBdj2NgDH7ILejbbXsdT87cVM"
+# 👇 ВСТАВТЕ СЮДИ ВАШ НОВИЙ ТОКЕН (З КРОКУ 1)
+TOKEN = "8516307940:AAFYcTWbeLq6vxYwogUqZQ6lMEuAy8ZAqDg"
 
 # ВАШ ID ГРУПИ
 ADMIN_GROUP_ID = -1003308912052
@@ -49,7 +49,7 @@ def get_cancel_kb():
     return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🚫 Скасувати")
 
 def get_submit_kb():
-    # Кнопка залишається (one_time_keyboard=False)
+    # Кнопка для відправки + Скасувати
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
     kb.add("✅ Відправити замовлення")
     kb.add("🚫 Скасувати")
@@ -59,20 +59,17 @@ def get_finish_chat_kb():
     return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🏁 Закінчити переписку")
 
 # --- ГЛОБАЛЬНЕ СКАСУВАННЯ ---
-@dp.message_handler(lambda m: m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"], state="*")
+@dp.message_handler(state='*', text=["🚫 Скасувати", "🏁 Закінчити переписку"])
 async def global_cancel(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     current_state = await state.get_state()
     
+    # Видаляємо з активних чатів
     if user_id in active_chats:
         active_chats.discard(user_id)
         if ADMIN_GROUP_ID != 0:
-            await bot.send_message(ADMIN_GROUP_ID, f"🔴 <b>Користувач завершив діалог:</b> {message.from_user.full_name}", parse_mode="HTML")
+            await bot.send_message(ADMIN_GROUP_ID, f"🔴 <b>Діалог завершено:</b> {message.from_user.full_name}", parse_mode="HTML")
 
-    if current_state is None:
-        await message.answer("Ви в головному меню.", reply_markup=get_main_keyboard())
-        return
-    
     await state.finish()
     await message.answer("✅ Дія скасована. Ви в головному меню.", reply_markup=get_main_keyboard())
 
@@ -210,17 +207,14 @@ async def s5(m: types.Message, state: FSMContext):
         )
         return
 
-    # ЗБІР ФАЙЛІВ (ОСЬ ТУТ БУЛА ПОМИЛКА - ТЕПЕР ВИПРАВЛЕНО)
+    # ЗБІР ФАЙЛІВ
     async with state.proxy() as d:
-        if m.text:
-            d['desc'].append(m.text)
-        
+        if m.text: d['desc'].append(m.text)
         if m.content_type != 'text':
             d['media'].append(m.message_id)
-            if m.caption:
-                d['desc'].append(m.caption)
+            if m.caption: d['desc'].append(m.caption)
     
-    # Не відповідаємо, просто зберігаємо (щоб не спамити)
+    # Не відповідаємо, просто зберігаємо (щоб не було дублів)
 
 # --- ПІДТРИМКА ---
 @dp.message_handler(lambda m: m.text == "💬 Підтримка", state="*")
@@ -239,6 +233,7 @@ async def supp(m: types.Message):
 async def supp_msg(m: types.Message, state: FSMContext):
     if m.chat.type != 'private': return
 
+    # Перевірка на вихід
     if m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"]:
         active_chats.discard(m.from_user.id)
         await state.finish()
@@ -258,17 +253,16 @@ async def reply(m: types.Message):
         rep = m.reply_to_message
         txt = rep.text or rep.caption or ""
         uid = None
+        
         if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
         elif rep.forward_from: uid = rep.forward_from.id
         
         if uid:
             if uid in active_chats:
                 await m.copy_to(uid)
-                await m.reply("✅")
+                # Бот НЕ буде писати в групу "Надіслано", щоб не було дублів
             else:
                 await m.reply("⛔️ <b>Цей чат завершено.</b>", parse_mode="HTML")
-        else:
-            pass
     except Exception as e:
         await m.reply(f"❌ Помилка: {e}")
 

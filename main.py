@@ -22,6 +22,9 @@ bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
+# --- СПИСОК АКТИВНИХ ДІАЛОГІВ ---
+active_chats = set()
+
 # --- МАШИНА СТАНІВ ---
 class OrderState(StatesGroup):
     waiting_for_name = State()
@@ -45,30 +48,41 @@ def get_main_keyboard():
 def get_cancel_kb():
     return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🚫 Скасувати")
 
+def get_submit_kb():
+    # Кнопка для відправки замовлення (не зникає)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    kb.add("✅ Відправити замовлення")
+    kb.add("🚫 Скасувати")
+    return kb
+
 def get_finish_chat_kb():
     return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🏁 Закінчити переписку")
 
 # --- ГЛОБАЛЬНЕ СКАСУВАННЯ ---
 @dp.message_handler(lambda m: m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"], state="*")
 async def global_cancel(message: types.Message, state: FSMContext):
-    # Дозволяємо скасування ТІЛЬКИ в особистих повідомленнях
-    if message.chat.type != 'private':
-        return
-
+    user_id = message.from_user.id
     current_state = await state.get_state()
-    await state.finish()
     
-    # Якщо це закінчення переписки - повідомляємо адмінів
-    if message.text == "🏁 Закінчити переписку":
+    # Видаляємо з активних чатів
+    if user_id in active_chats:
+        active_chats.discard(user_id)
         if ADMIN_GROUP_ID != 0:
-            await bot.send_message(ADMIN_GROUP_ID, f"🔴 <b>Діалог завершено користувачем</b> {message.from_user.full_name}", parse_mode="HTML")
-            
-    await message.answer("✅ Діалог завершено. Ви в головному меню.", reply_markup=get_main_keyboard())
+            await bot.send_message(ADMIN_GROUP_ID, f"🔴 <b>Користувач завершив діалог:</b> {message.from_user.full_name}", parse_mode="HTML")
+
+    if current_state is None:
+        await message.answer("Ви в головному меню.", reply_markup=get_main_keyboard())
+        return
+    
+    await state.finish()
+    await message.answer("✅ Дія скасована. Ви в головному меню.", reply_markup=get_main_keyboard())
 
 # --- СТАРТ ---
 @dp.message_handler(commands=['start'], state="*")
 async def start(message: types.Message, state: FSMContext):
     await state.finish()
+    if message.from_user.id in active_chats:
+        active_chats.discard(message.from_user.id)
     await message.answer("👋 Вітаємо в LabHub!\nОбери опцію нижче 👇", reply_markup=get_main_keyboard())
 
 # --- ID ГРУПИ ---
@@ -76,8 +90,8 @@ async def start(message: types.Message, state: FSMContext):
 async def get_id(message: types.Message):
     await message.reply(f"ID: `{message.chat.id}`", parse_mode="Markdown")
 
-# --- КНОПКИ (ТІЛЬКИ В ПРИВАТНИХ ЧАТАХ) ---
-@dp.message_handler(lambda m: m.chat.type == 'private' and m.text == "📄 Прайс-лист")
+# --- КНОПКИ ---
+@dp.message_handler(lambda m: m.text == "📄 Прайс-лист")
 async def price(m: types.Message):
     text = (
         "🔬 Лабораторна робота — <b>50 грн / шт.</b>\n"
@@ -86,7 +100,7 @@ async def price(m: types.Message):
     )
     await m.answer(text, parse_mode="HTML")
 
-@dp.message_handler(lambda m: m.chat.type == 'private' and m.text == "⚠️ Попередження")
+@dp.message_handler(lambda m: m.text == "⚠️ Попередження")
 async def warn(m: types.Message):
     text = (
         "<b>⚠️ ВАЖЛИВА ІНФОРМАЦІЯ</b>\n\n"
@@ -97,13 +111,13 @@ async def warn(m: types.Message):
     await m.answer(text, parse_mode="HTML")
 
 # --- ЗАМОВЛЕННЯ ---
-@dp.message_handler(lambda m: m.chat.type == 'private' and m.text == "📚 Замовити роботу", state="*")
+@dp.message_handler(lambda m: m.text == "📚 Замовити роботу", state="*")
 async def order_start(m: types.Message, state: FSMContext):
     await OrderState.waiting_for_name.set()
     async with state.proxy() as data: data['is_urgent'] = False
     await m.answer("1️⃣ Введіть ПІБ:", reply_markup=get_cancel_kb())
 
-@dp.message_handler(lambda m: m.chat.type == 'private' and m.text == "🔥 Термінове замовлення", state="*")
+@dp.message_handler(lambda m: m.text == "🔥 Термінове замовлення", state="*")
 async def order_urgent(m: types.Message, state: FSMContext):
     await OrderState.waiting_for_name.set()
     async with state.proxy() as data: data['is_urgent'] = True
@@ -140,8 +154,7 @@ async def s4(m: types.Message, state: FSMContext):
         d['media'] = []
         d['desc'] = []
         await OrderState.waiting_for_details.set()
-        kb = get_cancel_kb().add("✅ Відправити замовлення")
-        await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=kb)
+        await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=get_submit_kb())
 
 @dp.message_handler(state=OrderState.waiting_for_deadline)
 async def s4_deadline(m: types.Message, state: FSMContext):
@@ -151,12 +164,12 @@ async def s4_deadline(m: types.Message, state: FSMContext):
         d['desc'] = []
     
     await OrderState.waiting_for_details.set()
-    kb = get_cancel_kb().add("✅ Відправити замовлення")
-    await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=kb)
+    await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=get_submit_kb())
 
-# --- ЗБІР ТА ВІДПРАВКА ---
+# --- ЗБІР І ВІДПРАВКА ---
 @dp.message_handler(state=OrderState.waiting_for_details, content_types=types.ContentTypes.ANY)
 async def s5(m: types.Message, state: FSMContext):
+    # Якщо натиснули кнопку - відправляємо
     if m.text == "✅ Відправити замовлення":
         async with state.proxy() as d:
             desc = "\n".join(d['desc']) or "[Без опису]"
@@ -185,56 +198,62 @@ async def s5(m: types.Message, state: FSMContext):
                     try: await bot.forward_message(ADMIN_GROUP_ID, m.chat.id, mid)
                     except: pass
         
-        # ПЕРЕХІД У РЕЖИМ ЧАТУ
+        # Додаємо в активні чати і переходимо в режим підтримки
+        active_chats.add(m.from_user.id)
         await SupportState.waiting_for_message.set()
+        
         await m.answer(
             "✅ <b>Замовлення прийнято!</b>\n\n"
-            "💬 <b>Режим чату активний.</b>\n"
-            "Ви можете дописати деталі або скинути ще файли сюди.\n"
+            "💬 <b>Чат з адміном активний.</b>\n"
+            "Можете дописати деталі або скинути файли сюди.\n"
             "Щоб вийти, натисніть «🏁 Закінчити переписку».", 
             parse_mode="HTML",
             reply_markup=get_finish_chat_kb()
         )
         return
 
-    # Накопичення
+    # ЗБІР ФАЙЛІВ (Ось тут була помилка, я її виправив)
     async with state.proxy() as d:
-        if m.text: d['desc'].append(m.text)
+        if m.text: 
+            d['desc'].append(m.text)
+        
         if m.content_type != 'text':
             d['media'].append(m.message_id)
-            if m.caption: d['desc'].append(m.caption)
+            if m.caption: 
+                d['desc'].append(m.caption)
+    
+    # Не відповідаємо нічого, просто збираємо, кнопка "Відправити" залишається
 
 # --- ПІДТРИМКА (ВХІД) ---
-@dp.message_handler(lambda m: m.chat.type == 'private' and m.text == "💬 Підтримка", state="*")
+@dp.message_handler(lambda m: m.text == "💬 Підтримка", state="*")
 async def supp(m: types.Message):
+    active_chats.add(m.from_user.id)
     await SupportState.waiting_for_message.set()
     await m.answer(
         "✍️ <b>Ви на зв'язку з адміном.</b>\n"
-        "Пишіть ваше питання/повідомлення.\n"
-        "Щоб вийти, натисніть «🏁 Закінчити переписку».", 
+        "Пишіть ваше питання. Щоб вийти, натисніть «🏁 Закінчити переписку».", 
         parse_mode="HTML",
         reply_markup=get_finish_chat_kb()
     )
 
-# --- ОБРОБКА ПОВІДОМЛЕНЬ ВІД КОРИСТУВАЧА (ТІЛЬКИ В ПРИВАТІ) ---
+# --- ЧАТ З АДМІНОМ (ЮЗЕР -> АДМІН) ---
 @dp.message_handler(state=SupportState.waiting_for_message, content_types=types.ContentTypes.ANY)
 async def supp_msg(m: types.Message, state: FSMContext):
-    # ІГНОРУЄМО повідомлення з групи, щоб бот не пересилав повідомлення адміна
-    if m.chat.type != 'private':
-        return
-
+    # Обробка виходу з чату
     if m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"]:
+        active_chats.discard(m.from_user.id)
         await state.finish()
         if ADMIN_GROUP_ID != 0:
             await bot.send_message(ADMIN_GROUP_ID, f"🔴 <b>Діалог завершено користувачем</b> {m.from_user.full_name}", parse_mode="HTML")
         await m.answer("Діалог завершено.", reply_markup=get_main_keyboard())
         return
 
+    # Пересилання повідомлення адміну
     if ADMIN_GROUP_ID != 0:
         await bot.send_message(ADMIN_GROUP_ID, f"📩 <b>ПОВІДОМЛЕННЯ</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
         await m.forward(ADMIN_GROUP_ID)
 
-# --- АДМІН ВІДПОВІДАЄ (ТІЛЬКИ В ГРУПІ) ---
+# --- АДМІН ВІДПОВІДАЄ (АДМІН -> ЮЗЕР) ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def reply(m: types.Message):
     try:
@@ -242,20 +261,19 @@ async def reply(m: types.Message):
         txt = rep.text or rep.caption or ""
         uid = None
         
-        # Шукаємо ID через Regex
-        match = re.search(r"🆔\s*(\d+)", txt)
-        if match:
-            uid = int(match.group(1))
-        # Або через Forward (якщо це переслане повідомлення)
-        elif rep.forward_from:
-            uid = rep.forward_from.id
+        # Шукаємо ID
+        if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
+        elif rep.forward_from: uid = rep.forward_from.id
         
         if uid:
-            await m.copy_to(uid)
-            # Ми НЕ пишемо "Відповідь надіслано" в групу, щоб не засмічувати чат
-            # await m.reply("✅")  <-- Прибрав це
+            # Перевіряємо, чи активний чат
+            if uid in active_chats:
+                await m.copy_to(uid)
+                await m.reply("✅")
+            else:
+                await m.reply("⛔️ <b>Цей чат завершено.</b> Користувач вийшов.", parse_mode="HTML")
         else:
-            # Якщо адмін відповідає на щось без ID, просто ігноруємо
+            # Ігноруємо, якщо адмін відповідає не на тікет
             pass
             
     except Exception as e:

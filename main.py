@@ -28,18 +28,37 @@ class OrderState(StatesGroup):
     waiting_for_group = State()
     waiting_for_subject = State()
     waiting_for_teacher = State()
+    waiting_for_deadline = State()
     waiting_for_details = State()
 
 class SupportState(StatesGroup):
     waiting_for_message = State()
 
-# --- КЛАВІАТУРА ---
+# --- КЛАВІАТУРИ ---
 def get_main_keyboard():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("📄 Прайс-лист", "📚 Замовити роботу")
     kb.add("🔥 Термінове замовлення")
     kb.add("💬 Підтримка", "⚠️ Попередження")
     return kb
+
+def get_cancel_kb():
+    # Для етапів заповнення анкети
+    return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🚫 Скасувати")
+
+def get_finish_chat_kb():
+    # Для режимів переписки (Підтримка, Після замовлення)
+    return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🏁 Закінчити переписку")
+
+# --- ГЛОБАЛЬНЕ СКАСУВАННЯ (Реагує на обидві кнопки) ---
+@dp.message_handler(lambda m: m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"], state="*")
+async def global_cancel(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+    
+    await state.finish()
+    await message.answer("✅ Діалог завершено. Ви в головному меню.", reply_markup=get_main_keyboard())
 
 # --- СТАРТ ---
 @dp.message_handler(commands=['start'], state="*")
@@ -67,10 +86,8 @@ async def warn(m: types.Message):
     text = (
         "<b>⚠️ ВАЖЛИВА ІНФОРМАЦІЯ</b>\n\n"
         "Ми докладаємо максимум зусиль, щоб виконати завдання якісно та правильно. ✅\n\n"
-        "Проте, <b>ми не надаємо 100% гарантії</b> на повну відсутність помилок або отримання найвищого балу, "
-        "оскільки вимоги у кожного викладача можуть відрізнятися.\n\n"
-        "Адміністрація бота не несе відповідальності за ваші оцінки та можливі академічні наслідки. "
-        "Використовуючи отримані матеріали, ви берете всі ризики на себе."
+        "Проте, <b>ми не надаємо 100% гарантії</b> на повну відсутність помилок або отримання найвищого балу.\n\n"
+        "Адміністрація бота не несе відповідальності за ваші оцінки. Використовуючи отримані матеріали, ви берете всі ризики на себе."
     )
     await m.answer(text, parse_mode="HTML")
 
@@ -79,58 +96,81 @@ async def warn(m: types.Message):
 async def order_start(m: types.Message, state: FSMContext):
     await OrderState.waiting_for_name.set()
     async with state.proxy() as data: data['is_urgent'] = False
-    await m.answer("1️⃣ Введіть ПІБ:", reply_markup=types.ReplyKeyboardRemove())
+    await m.answer("1️⃣ Введіть ПІБ:", reply_markup=get_cancel_kb())
 
 @dp.message_handler(lambda m: m.text == "🔥 Термінове замовлення", state="*")
 async def order_urgent(m: types.Message, state: FSMContext):
     await OrderState.waiting_for_name.set()
     async with state.proxy() as data: data['is_urgent'] = True
-    await m.answer("🚀 <b>ТЕРМІНОВО!</b>\n1️⃣ Введіть ПІБ:", parse_mode="HTML", reply_markup=types.ReplyKeyboardRemove())
+    await m.answer("🚀 <b>ТЕРМІНОВО!</b>\n1️⃣ Введіть ПІБ:", parse_mode="HTML", reply_markup=get_cancel_kb())
 
 # --- ЕТАПИ АНКЕТИ ---
 @dp.message_handler(state=OrderState.waiting_for_name)
 async def s1(m: types.Message, state: FSMContext):
     async with state.proxy() as d: d['name'] = m.text
     await OrderState.next()
-    await m.answer("2️⃣ Група:")
+    await m.answer("2️⃣ Група:", reply_markup=get_cancel_kb())
 
 @dp.message_handler(state=OrderState.waiting_for_group)
 async def s2(m: types.Message, state: FSMContext):
     async with state.proxy() as d: d['group'] = m.text
     await OrderState.next()
-    await m.answer("3️⃣ Предмет:")
+    await m.answer("3️⃣ Предмет:", reply_markup=get_cancel_kb())
 
 @dp.message_handler(state=OrderState.waiting_for_subject)
 async def s3(m: types.Message, state: FSMContext):
     async with state.proxy() as d: d['subject'] = m.text
     await OrderState.next()
-    await m.answer("4️⃣ Викладач:")
+    await m.answer("4️⃣ Викладач:", reply_markup=get_cancel_kb())
 
 @dp.message_handler(state=OrderState.waiting_for_teacher)
 async def s4(m: types.Message, state: FSMContext):
-    async with state.proxy() as d:
-        d['teacher'] = m.text
+    async with state.proxy() as d: d['teacher'] = m.text
+    
+    if d['is_urgent']:
+        await OrderState.waiting_for_deadline.set()
+        await m.answer("⏰ <b>На коли потрібно?</b> (Дата/Час):", parse_mode="HTML", reply_markup=get_cancel_kb())
+    else:
+        d['deadline'] = "Не вказано (Стандарт)"
         d['media'] = []
         d['desc'] = []
-    await OrderState.next()
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Відправити замовлення")
+        await OrderState.waiting_for_details.set()
+        kb = get_cancel_kb().add("✅ Відправити замовлення")
+        await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=kb)
+
+# Етап дедлайну (тільки для термінових)
+@dp.message_handler(state=OrderState.waiting_for_deadline)
+async def s4_deadline(m: types.Message, state: FSMContext):
+    async with state.proxy() as d:
+        d['deadline'] = m.text
+        d['media'] = []
+        d['desc'] = []
+    
+    await OrderState.waiting_for_details.set()
+    kb = get_cancel_kb().add("✅ Відправити замовлення")
     await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=kb)
 
-# --- ЗБІР І ВІДПРАВКА (ТУТ ВИПРАВЛЕНО ОФОРМЛЕННЯ) ---
+# --- ЗБІР ТА ВІДПРАВКА ---
 @dp.message_handler(state=OrderState.waiting_for_details, content_types=types.ContentTypes.ANY)
 async def s5(m: types.Message, state: FSMContext):
     if m.text == "✅ Відправити замовлення":
         async with state.proxy() as d:
             desc = "\n".join(d['desc']) or "[Без опису]"
-            title = "🔥🔥🔥 ТЕРМІНОВО!" if d['is_urgent'] else "⚡️ НОВЕ ЗАМОВЛЕННЯ!"
             
-            # ФОРМУВАННЯ ЗВІТУ ЯК НА ФОТО
+            if d['is_urgent']:
+                title = "🔥🔥🔥 ТЕРМІНОВО!"
+                deadl = f"⏰ <b>ТЕРМІН:</b> {d['deadline']}"
+            else:
+                title = "⚡️ НОВЕ ЗАМОВЛЕННЯ!"
+                deadl = ""
+
             report = (
                 f"<b>{title}</b>\n\n"
                 f"👤 <b>ПІБ:</b> {d['name']} (@{m.from_user.username})\n"
                 f"🎓 <b>Група:</b> {d['group']}\n"
                 f"📚 <b>Предмет:</b> {d['subject']}\n"
                 f"👨‍🏫 <b>Викладач:</b> {d['teacher']}\n"
+                f"{deadl}\n"
                 f"📝 <b>Деталі:</b> {desc}\n\n"
                 f"🆔 <code>{m.from_user.id}</code>"
             )
@@ -141,10 +181,20 @@ async def s5(m: types.Message, state: FSMContext):
                     try: await bot.forward_message(ADMIN_GROUP_ID, m.chat.id, mid)
                     except: pass
         
-        await state.finish()
-        await m.answer("✅ Прийнято!", reply_markup=get_main_keyboard())
+        # Переходимо в режим чату
+        await SupportState.waiting_for_message.set()
+        
+        await m.answer(
+            "✅ <b>Замовлення прийнято!</b>\n\n"
+            "💬 <b>Режим чату активний.</b>\n"
+            "Ви можете дописати деталі або скинути ще файли сюди.\n"
+            "Щоб вийти, натисніть «🏁 Закінчити переписку».", 
+            parse_mode="HTML",
+            reply_markup=get_finish_chat_kb()
+        )
         return
 
+    # Накопичення
     async with state.proxy() as d:
         if m.text: d['desc'].append(m.text)
         if m.content_type != 'text':
@@ -155,22 +205,34 @@ async def s5(m: types.Message, state: FSMContext):
 @dp.message_handler(lambda m: m.text == "💬 Підтримка", state="*")
 async def supp(m: types.Message):
     await SupportState.waiting_for_message.set()
-    await m.answer("✍️ Пишіть питання:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("🔙 Скасувати"))
+    await m.answer(
+        "✍️ <b>Ви на зв'язку з адміном.</b>\n"
+        "Пишіть ваше питання/повідомлення. Можна відправляти фото та файли.", 
+        parse_mode="HTML",
+        reply_markup=get_finish_chat_kb()
+    )
 
-@dp.message_handler(lambda m: m.text == "🔙 Скасувати", state=SupportState.waiting_for_message)
-async def canc(m: types.Message, state: FSMContext):
-    await state.finish()
-    await m.answer("Скасовано.", reply_markup=get_main_keyboard())
-
+# --- ОБРОБКА ПОВІДОМЛЕНЬ У ЧАТІ ---
 @dp.message_handler(state=SupportState.waiting_for_message, content_types=types.ContentTypes.ANY)
 async def supp_msg(m: types.Message, state: FSMContext):
-    if ADMIN_GROUP_ID != 0:
-        await bot.send_message(ADMIN_GROUP_ID, f"📩 <b>ПИТАННЯ</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
-        await m.forward(ADMIN_GROUP_ID)
-    await state.finish()
-    await m.answer("✅ Надіслано!", reply_markup=get_main_keyboard())
+    if m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"]:
+        await state.finish()
+        await m.answer("Діалог завершено.", reply_markup=get_main_keyboard())
+        return
 
-# --- АДМІН ВІДПОВІДАЄ ---
+    if ADMIN_GROUP_ID != 0:
+        await bot.send_message(ADMIN_GROUP_ID, f"📩 <b>ПОВІДОМЛЕННЯ</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
+        await m.forward(ADMIN_GROUP_ID)
+
+# --- REPLY ---
+@dp.message_handler(lambda m: m.reply_to_message and m.reply_to_message.from_user.id == bot.id, content_types=types.ContentTypes.ANY)
+async def direct_reply(m: types.Message):
+    if ADMIN_GROUP_ID != 0:
+        await bot.send_message(ADMIN_GROUP_ID, f"↩️ <b>REPLY ВІД КОРИСТУВАЧА</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
+        await m.forward(ADMIN_GROUP_ID)
+    await m.answer("✅ Передано адміну.")
+
+# --- АДМІН ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def reply(m: types.Message):
     try:
@@ -182,13 +244,13 @@ async def reply(m: types.Message):
         
         if uid:
             await m.copy_to(uid)
-            await m.reply("✅ Відповідь надіслано!")
+            await m.reply("✅")
         else:
-            await m.reply("❌ Не бачу ID. Переконайтеся, що відповідаєте на повідомлення з 🆔")
+            await m.reply("❌ Не бачу ID.")
     except Exception as e:
         await m.reply(f"❌ Помилка: {e}")
 
-# --- СЕРВЕР (ЩОБ НЕ ВИМИКАВСЯ) ---
+# --- СЕРВЕР ---
 async def keep_alive(request):
     return web.Response(text="I am alive!")
 

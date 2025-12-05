@@ -49,7 +49,7 @@ def get_cancel_kb():
     return types.ReplyKeyboardMarkup(resize_keyboard=True).add("🚫 Скасувати")
 
 def get_submit_kb():
-    # one_time_keyboard=False означає, що кнопка НЕ зникне
+    # Кнопка залишається (one_time_keyboard=False)
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
     kb.add("✅ Відправити замовлення")
     kb.add("🚫 Скасувати")
@@ -64,7 +64,6 @@ async def global_cancel(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     current_state = await state.get_state()
     
-    # Видаляємо з активних чатів
     if user_id in active_chats:
         active_chats.discard(user_id)
         if ADMIN_GROUP_ID != 0:
@@ -154,7 +153,6 @@ async def s4(m: types.Message, state: FSMContext):
         d['media'] = []
         d['desc'] = []
         await OrderState.waiting_for_details.set()
-        # ТУТ КНОПКА БІЛЬШЕ НЕ ЗНИКНЕ
         await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=get_submit_kb())
 
 @dp.message_handler(state=OrderState.waiting_for_deadline)
@@ -165,7 +163,6 @@ async def s4_deadline(m: types.Message, state: FSMContext):
         d['desc'] = []
     
     await OrderState.waiting_for_details.set()
-    # ТУТ ТЕЖ
     await m.answer("5️⃣ Скиньте завдання (фото/файл) і натисніть кнопку:", reply_markup=get_submit_kb())
 
 # --- ЗБІР І ВІДПРАВКА ---
@@ -200,7 +197,6 @@ async def s5(m: types.Message, state: FSMContext):
                     try: await bot.forward_message(ADMIN_GROUP_ID, m.chat.id, mid)
                     except: pass
         
-        # Додаємо в активні чати і переходимо в режим підтримки
         active_chats.add(m.from_user.id)
         await SupportState.waiting_for_message.set()
         
@@ -214,19 +210,19 @@ async def s5(m: types.Message, state: FSMContext):
         )
         return
 
-    # ЗБІР ФАЙЛІВ (Ось тут була помилка з дужкою, я її виправив!)
+    # ЗБІР ФАЙЛІВ (ОСЬ ТУТ БУЛА ПОМИЛКА - ТЕПЕР ВИПРАВЛЕНО)
     async with state.proxy() as d:
-        if m.text: 
+        if m.text:
             d['desc'].append(m.text)
         
         if m.content_type != 'text':
             d['media'].append(m.message_id)
-            if m.caption: 
+            if m.caption:
                 d['desc'].append(m.caption)
     
-    # Не відповідаємо нічого, просто збираємо, кнопка залишається
+    # Не відповідаємо, просто зберігаємо (щоб не спамити)
 
-# --- ПІДТРИМКА (ВХІД) ---
+# --- ПІДТРИМКА ---
 @dp.message_handler(lambda m: m.text == "💬 Підтримка", state="*")
 async def supp(m: types.Message):
     active_chats.add(m.from_user.id)
@@ -238,18 +234,16 @@ async def supp(m: types.Message):
         reply_markup=get_finish_chat_kb()
     )
 
-# --- ЧАТ З АДМІНОМ (ЮЗЕР -> АДМІН) ---
+# --- ЧАТ З АДМІНОМ ---
 @dp.message_handler(state=SupportState.waiting_for_message, content_types=types.ContentTypes.ANY)
 async def supp_msg(m: types.Message, state: FSMContext):
-    # Ігноруємо повідомлення в групах, щоб бот не дублював адміна
-    if m.chat.type != 'private':
-        return
+    if m.chat.type != 'private': return
 
     if m.text in ["🚫 Скасувати", "🏁 Закінчити переписку"]:
         active_chats.discard(m.from_user.id)
         await state.finish()
         if ADMIN_GROUP_ID != 0:
-            await bot.send_message(ADMIN_GROUP_ID, f"🔴 <b>Діалог завершено користувачем</b> {m.from_user.full_name}", parse_mode="HTML")
+            await bot.send_message(ADMIN_GROUP_ID, f"🔴 <b>Діалог завершено:</b> {m.from_user.full_name}", parse_mode="HTML")
         await m.answer("Діалог завершено.", reply_markup=get_main_keyboard())
         return
 
@@ -257,15 +251,13 @@ async def supp_msg(m: types.Message, state: FSMContext):
         await bot.send_message(ADMIN_GROUP_ID, f"📩 <b>ПОВІДОМЛЕННЯ</b>\nВід: {m.from_user.full_name}\n🆔 <code>{m.from_user.id}</code>", parse_mode="HTML")
         await m.forward(ADMIN_GROUP_ID)
 
-# --- АДМІН ВІДПОВІДАЄ (АДМІН -> ЮЗЕР) ---
+# --- АДМІН ВІДПОВІДАЄ ---
 @dp.message_handler(lambda m: m.chat.id == ADMIN_GROUP_ID and m.reply_to_message, content_types=types.ContentTypes.ANY)
 async def reply(m: types.Message):
     try:
         rep = m.reply_to_message
         txt = rep.text or rep.caption or ""
         uid = None
-        
-        # Шукаємо ID
         if match := re.search(r"🆔\s*(\d+)", txt): uid = int(match.group(1))
         elif rep.forward_from: uid = rep.forward_from.id
         
@@ -277,7 +269,6 @@ async def reply(m: types.Message):
                 await m.reply("⛔️ <b>Цей чат завершено.</b>", parse_mode="HTML")
         else:
             pass
-            
     except Exception as e:
         await m.reply(f"❌ Помилка: {e}")
 
